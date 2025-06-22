@@ -19,7 +19,7 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - ./mysql/conf/my.cnf:/etc/mysql/conf.d/custom.cnf 
+      - ./mysql/conf/my.conf:/etc/mysql/conf.d/custom.cnf 
       - ./mysql/data:/var/lib/mysql
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
@@ -48,7 +48,7 @@ services:
       - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
       - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
       - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,PLAINTEXT_INTERNAL://:29092
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://:9092,PLAINTEXT_INTERNAL://kafka:29092
       - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT_INTERNAL
       - ALLOW_PLAINTEXT_LISTENER=yes
     depends_on:
@@ -88,42 +88,14 @@ services:
     volumes:
       - ./canal/instance.properties:/home/admin/canal-server/conf/example/instance.properties
 
-  # 基准索引导出服务
-  # baseline-exporter:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.baseline-exporter
-  #   container_name: baseline-exporter
-  #   depends_on:
-  #     mysql:
-  #       condition: service_healthy
-  #   environment:
-  #     DB_URL: jdbc:mysql://mysql:3306/example_db
-  #     DB_USER: root
-  #     DB_PASSWORD: root
-  #     OUTPUT_DIR: /data/index
-  #     CRON_SCHEDULE: "0 0 * * * ?"  # 每天凌晨2点执行
-  #   volumes:
-  #     - index_data:/data/index
-
-  # # 增量索引消费服务
-  # incremental-consumer:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.incremental-consumer
-  #   container_name: incremental-consumer
-  #   depends_on:
-  #     - kafka
-  #     - baseline-exporter
-  #   environment:
-  #     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-  #     KAFKA_TOPIC: mysql-binlog-events
-  #     GROUP_ID: index-consumer-group
-  #     BASELINE_INDEX_DIR: /data/index
-  #   volumes:
-  #     - index_data:/data/index
-
-#volumes:
-  # mysql_data:
-  # kafka_data:
-  #index_data:
+  inc_indexer:
+    image: openjdk:17-jdk-slim
+    container_name: inc_indexer
+    volumes:
+      - ./inc_index/target/canal-kafka-indexer-1.0-SNAPSHOT.jar:/app/indexer.jar
+      - ./config/config.properties:/app/config.properties
+    working_dir: /app
+    command: ["java", "-Dconfig.file=/app/config.properties", "-jar", "indexer.jar"]
+    depends_on:
+      - canal-server
+      - kafka

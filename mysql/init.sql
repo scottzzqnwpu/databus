@@ -10,3 +10,6 @@ CREATE TABLE IF NOT EXISTS products (
 INSERT INTO products (name, price, description) VALUES
 ('Laptop', 999.99, 'High performance laptop'),
 ('Phone', 699.99, 'Latest smartphone model');
+
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY 'root' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
