@@ -1,0 +1,129 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: liupeng0518/mysql:5.7-arm64
+    container_name: mysql-canal
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: example_db
+      MYSQL_USER: canal
+      MYSQL_PASSWORD: canal
+      MYSQL_ROOT_HOST: '%'
+    command: 
+      --binlog-format=ROW
+      --log-bin=mysql-bin
+      --binlog-row-image=FULL
+      --server-id=1
+      --binlog-do-db=example_db
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql/conf/my.cnf:/etc/mysql/conf.d/custom.cnf 
+      - ./mysql/data:/var/lib/mysql
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+  # Zookeeper (Kafka 依赖)
+  zookeeper:
+    image: bitnami/zookeeper:3.8
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+
+  # Kafka 消息队列
+  kafka:
+    image: bitnami/kafka:3.5
+    container_name: kafka
+    ports:
+      - "9092:9092"    # 外部访问端口
+      - "29092:29092"  # 内部集群通讯端口（可选）
+    environment:
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,PLAINTEXT_INTERNAL://:29092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT_INTERNAL
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    depends_on:
+      - zookeeper
+  
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "18080:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:29092
+      - KAFKA_CLUSTERS_0_ZOOKEEPER=zookeeper:2181
+    depends_on:
+      - kafka
+
+  # Canal Server (阿里开源binlog处理组件)
+  canal-server:
+    image: canal/canal-server:latest
+    container_name: canal-server
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      canal.instance.mysql.slaveId: 1234
+      canal.instance.filter.regex: example_db\\..*
+      canal.instance.filter.black.regex: 
+      canal.instance.master.address: mysql:3306
+      canal.instance.dbUsername: root
+      canal.instance.dbPassword: root
+      canal.instance.connectionCharset: UTF-8
+      canal.instance.tsdb.enable: true
+      canal.instance.gtidon: false
+    ports:
+      - "11111:11111"
+    volumes:
+      - ./canal/instance.properties:/home/admin/canal-server/conf/example/instance.properties
+
+  # 基准索引导出服务
+  # baseline-exporter:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.baseline-exporter
+  #   container_name: baseline-exporter
+  #   depends_on:
+  #     mysql:
+  #       condition: service_healthy
+  #   environment:
+  #     DB_URL: jdbc:mysql://mysql:3306/example_db
+  #     DB_USER: root
+  #     DB_PASSWORD: root
+  #     OUTPUT_DIR: /data/index
+  #     CRON_SCHEDULE: "0 0 * * * ?"  # 每天凌晨2点执行
+  #   volumes:
+  #     - index_data:/data/index
+
+  # # 增量索引消费服务
+  # incremental-consumer:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.incremental-consumer
+  #   container_name: incremental-consumer
+  #   depends_on:
+  #     - kafka
+  #     - baseline-exporter
+  #   environment:
+  #     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  #     KAFKA_TOPIC: mysql-binlog-events
+  #     GROUP_ID: index-consumer-group
+  #     BASELINE_INDEX_DIR: /data/index
+  #   volumes:
+  #     - index_data:/data/index
+
+#volumes:
+  # mysql_data:
+  # kafka_data:
+  #index_data:
